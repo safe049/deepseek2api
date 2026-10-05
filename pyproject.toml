@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deepseek2api"
+version = "0.1.0"
+description = "将 DeepSeek Web 端接口转换为 OpenAI Chat Completions 兼容 API 的轻量代理。"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "deepseek-pow",
+    "wasmtime",
+]
+
+[project.scripts]
+deepseek2api = "deepseek2api.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

@@ -1,0 +1,10 @@
+model_list:
+  - model_name: claude-3-5-sonnet    # Claude Code 会请求的模型名
+    litellm_params:
+      model: openai/deepseek-chat     # openai/ 前缀 + 你的实际模型名
+      api_base: http://127.0.0.1:8000/v1  # 你的 deepseek2api 地址
+      api_key: dummy                   # deepseek2api 没设密钥就随便填
+      # 如果 deepseek2api 启用了鉴权，换成真实的 key
+
+litellm_settings:
+  drop_params: true                   # 重要：丢弃 Anthropic 专有参数（如 thinking、cache_control）[citation:14]

@@ -1,0 +1,44 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# ── 虚拟环境 ──
+.venv/
+venv/
+env/
+ENV/
+
+# ── 测试与缓存 ──
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# ── 本地配置与凭证（切勿提交）──
+.env
+.env.local
+.env.*.local
+
+# ── PoW WASM 资源 ──
+sha3_wasm_bg.wasm
+
+# ── 运行时产物 ──
+log/
+*.log
+
+# ── 编辑器 / 系统 ──
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

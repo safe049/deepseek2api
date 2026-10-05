@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>deepseek2api 管理面板</title>
+<link rel="stylesheet" href="/admin/static/style.css?v=1" />
+</head>
+<body>
+<div id="login-screen" class="login-screen">
+  <div class="login-card">
+    <div class="login-logo">DS</div>
+    <div class="login-subtitle">deepseek2api 管理面板</div>
+    <form id="login-form" class="login-form">
+      <input type="password" id="login-password" placeholder="管理密码" autocomplete="current-password" required />
+      <button type="submit">登录</button>
+      <div id="login-error" class="login-error" hidden></div>
+    </form>
+  </div>
+</div>
+
+<div id="app" class="app hidden">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-logo">DS</div>
+      <div class="brand-text">
+        <div class="brand-title">deepseek2api</div>
+        <div class="brand-sub">管理面板</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a class="nav-item active" data-view="dashboard"><span>仪表盘</span></a>
+      <a class="nav-item" data-view="logs"><span>请求日志</span></a>
+      <a class="nav-item" data-view="models"><span>模型列表</span></a>
+      <a class="nav-item" data-view="config"><span>配置查看</span></a>
+    </nav>
+    <div class="sidebar-footer">
+      <button id="logout-btn" class="logout-btn">退出登录</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-title" id="topbar-title">仪表盘</div>
+      <div class="topbar-actions">
+        <label class="auto-refresh">
+          <input type="checkbox" id="auto-refresh" checked />
+          <span>自动刷新 (5s)</span>
+        </label>
+        <button id="manual-refresh" class="btn btn-ghost">刷新</button>
+      </div>
+    </header>
+    <div class="content" id="content">
+      <section id="view-dashboard" class="view active"></section>
+      <section id="view-logs" class="view"></section>
+      <section id="view-models" class="view"></section>
+      <section id="view-config" class="view"></section>
+    </div>
+  </main>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/admin/static/app.js?v=1"></script>
+</body>
+</html>
