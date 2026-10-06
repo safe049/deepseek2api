@@ -109,6 +109,8 @@ class AppConfig:
     search_enabled: bool = False
     strip_citations: bool = True
 
+    file_upload_enabled: bool = True
+
     # ── DeepSeek API 端点 ──
     @property
     def pow_challenge_url(self) -> str:
@@ -238,6 +240,9 @@ def load_config(env_file: str = ".env") -> AppConfig:
         session_cache_ttl=max(60, parse_int(values.get("DEEPSEEK_SESSION_CACHE_TTL_SECONDS"), 7200)),
         search_enabled=parse_bool(values.get("DEEPSEEK_SEARCH_ENABLED"), False), 
         strip_citations=parse_bool(values.get("DEEPSEEK_STRIP_CITATIONS"), True),
+        file_upload_enabled=parse_bool(
+            values.get("DEEPSEEK_FILE_UPLOAD_ENABLED"), True
+        ),        
     )
 
     if not (1 <= config.port <= 65535):

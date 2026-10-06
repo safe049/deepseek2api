@@ -31,6 +31,7 @@ class PoWSolver:
         algorithm: str = "DeepSeekHashV1",
         expire_at: int = 0,
         signature: str = "",
+        target_path: str = "/api/v0/chat/completion",   # ← 新增
     ) -> str:
         """
         求解 PoW challenge，返回 Base64 编码的 x-ds-pow-response。
@@ -41,7 +42,6 @@ class PoWSolver:
             self.logger.warning("未注册的算法 %s，回退到 DeepSeekHashV1", algorithm)
             solver = self._default_solver
 
-        # 关键修复 1：前缀必须包含 expire_at
         prefix = f"{salt}_{expire_at}_"
 
         pow_challenge = Challenge(
@@ -54,8 +54,8 @@ class PoWSolver:
         )
 
         self.logger.info(
-            "开始 PoW 求解 algorithm=%s difficulty=%d expire_at=%d",
-            algorithm, difficulty, expire_at,
+            "开始 PoW 求解 algorithm=%s difficulty=%d expire_at=%d target=%s",
+            algorithm, difficulty, expire_at, target_path,
         )
 
         try:
@@ -65,22 +65,17 @@ class PoWSolver:
             raise RuntimeError(f"PoW 求解失败: {exc}") from exc
 
         payload = solution.to_answer_payload()
-        raw_answer = payload.get("answer", 0)
-
-        # 关键修复 2：answer 必须是整数
-        answer_int = int(raw_answer)
+        answer_int = int(payload.get("answer", 0))
 
         self.logger.info("PoW 求解成功 answer=%d", answer_int)
 
-        # 关键修复 3：直接返回 Base64 编码后的完整 JSON
-        # 浏览器发送的就是这个格式，不需要在 deepseek_auth 里再编码一次
         return self._make_header(
             algorithm=algorithm,
             challenge=challenge,
             salt=salt,
             answer=answer_int,
             signature=signature,
-            target_path=pow_challenge.target_path if hasattr(pow_challenge, 'target_path') else "/api/v0/chat/completion",
+            target_path=target_path,
         )
 
     def _make_header(

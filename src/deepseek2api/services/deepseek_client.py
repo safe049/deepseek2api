@@ -41,11 +41,13 @@ from .tool_calling import (
     StreamingToolDetector,
     parse_tool_calls,
 )
+from .file_uploader import FileUploader
 from .translator import (
     StreamState,
     convert_openai_to_deepseek,
     convert_openai_to_deepseek_incremental,
     convert_deepseek_to_openai_chunk,
+    extract_images_from_messages,
 )
 from .citation_utils import CitationStripper, strip_citation_marks
 
@@ -293,6 +295,14 @@ class DeepSeekWebClient:
         self._proxy_sessions: set[str] = set()
         self._proxy_sessions_lock = threading.Lock()
 
+        self.file_uploader = FileUploader(
+            config=config,
+            auth=self.auth,
+            pow_solver=self.pow_solver,
+            logger=logger,
+        )
+        self.file_upload_enabled = getattr(config, "file_upload_enabled", True)
+
         if self.cache_enabled:
             self.logger.info(
                 "会话缓存已启用 max_size=%d ttl=%ds",
@@ -318,8 +328,14 @@ class DeepSeekWebClient:
         if not isinstance(messages, list):
             messages = []
 
+        # ★ 先上传图片（缓存命中路径和 fresh 路径都需要它）
+        ref_file_ids = self._upload_images_from_messages(messages)
+
         full_prefix, last_message = _split_messages(messages)
-        last_content = last_message.get("content", "") if isinstance(last_message, dict) else ""
+        last_content = (
+            last_message.get("content", "")
+            if isinstance(last_message, dict) else ""
+        )
         model = str(payload.get("model", self.config.default_model))
         p_hash = prefix_hash(full_prefix, model=model)
 
@@ -328,11 +344,15 @@ class DeepSeekWebClient:
         if cached:
             ds_payload = convert_openai_to_deepseek_incremental(payload, self.config)
             ds_payload["chat_session_id"] = cached.session_id
+            if ref_file_ids:                        # ← 注入
+                ds_payload["ref_file_ids"] = ref_file_ids
 
             self.logger.info(
-                "Cache HIT  | prefix=%s... | session=%s... | turn=%d | prompt_len=%d",
+                "Cache HIT  | prefix=%s... | session=%s... | turn=%d | "
+                "prompt_len=%d | files=%d",
                 p_hash[:12], cached.session_id[:12],
                 cached.turn_count + 1, len(ds_payload.get("prompt", "")),
+                len(ref_file_ids),
             )
             return {
                 "mode": "cached",
@@ -347,12 +367,15 @@ class DeepSeekWebClient:
             }
 
         ds_payload = convert_openai_to_deepseek(payload, self.config)
+        if ref_file_ids:                            # ← 注入
+            ds_payload["ref_file_ids"] = ref_file_ids
 
         self.logger.info(
-            "Cache %s | prefix=%s... | prompt_len=%d (full history packed)",
+            "Cache %s | prefix=%s... | prompt_len=%d (full history packed) | files=%d",
             "MISS" if self.cache_enabled else "OFF",
             p_hash[:12],
             len(ds_payload.get("prompt", "")),
+            len(ref_file_ids),
         )
         return {
             "mode": "fresh",
@@ -646,6 +669,31 @@ class DeepSeekWebClient:
                         response.close()
                     except Exception:
                         pass
+
+    def _upload_images_from_messages(
+        self, messages: list[dict],
+    ) -> list[str]:
+        """把消息里所有 image_url 上传成 DeepSeek file_id。"""
+        if not self.file_upload_enabled:
+            return []
+
+        images = extract_images_from_messages(messages)
+        if not images:
+            return []
+
+        self.logger.info("Vision | 检测到 %d 张图片，开始上传", len(images))
+        file_ids: list[str] = []
+        for i, img in enumerate(images):
+            name_hint = f"image_{i}.png"
+            file_id = self.file_uploader.upload_from_openai_image(
+                img["url"], name_hint=name_hint,
+            )
+            if file_id:
+                file_ids.append(file_id)
+            else:
+                self.logger.warning("Vision | 第 %d 张图片上传失败，已跳过", i)
+
+        return file_ids
 
     # ═══════════════════════════════════════════════════════
     # Public API - stream
@@ -1015,6 +1063,9 @@ class DeepSeekWebClient:
             algorithm=completion_pow_challenge.get("algorithm", "DeepSeekHashV1"),
             expire_at=completion_pow_challenge.get("expire_at", 0),
             signature=completion_pow_challenge.get("signature", ""),
+            target_path=completion_pow_challenge.get(
+                "target_path", "/api/v0/chat/completion",
+            ),                                       # ← 新增
         )
         self.logger.info("Completion PoW 求解完成")
 

@@ -53,24 +53,54 @@ def _format_system_block(parts: list[str]) -> str:
 
 
 def _extract_text_from_content(content: Any) -> str:
+    """只提取文本部分——image_url 由 FileUploader 单独处理。"""
     if isinstance(content, list):
         text_parts: list[str] = []
         for part in content:
             if isinstance(part, dict):
                 if part.get("type") == "text":
                     text_parts.append(str(part.get("text", "")))
-                elif part.get("type") == "image_url":
-                    url = part.get("image_url", {})
-                    if isinstance(url, dict):
-                        url = url.get("url", "")
-                    if url:
-                        text_parts.append(f"[image:{url}]")
+                # image_url 忽略：通过 ref_file_ids 传递
             elif isinstance(part, str):
                 text_parts.append(part)
         return "\n".join(text_parts)
     if content is None:
         return ""
     return str(content)
+
+
+def extract_images_from_messages(messages: list[dict]) -> list[dict]:
+    """
+    从 OpenAI 消息中提取所有 image_url 项。
+
+    返回 [{"url": "...", "detail": "..."}]，detail 可能为 None。
+
+    兼容的两种写法：
+      {"type": "image_url", "image_url": {"url": "...", "detail": "..."}}
+      {"type": "image_url", "image_url": "..."}   # 简写
+    """
+    images: list[dict] = []
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        content = m.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") != "image_url":
+                continue
+            url_obj = part.get("image_url")
+            if isinstance(url_obj, dict):
+                url = url_obj.get("url", "")
+                detail = url_obj.get("detail")
+            else:
+                url = str(url_obj or "")
+                detail = None
+            if url:
+                images.append({"url": url, "detail": detail})
+    return images
 
 
 def _is_json_mode(openai_payload: dict) -> bool:
