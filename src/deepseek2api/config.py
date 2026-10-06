@@ -103,7 +103,7 @@ class AppConfig:
 
     # ── 会话缓存 ──
     session_cache_enabled: bool = True
-    session_cache_max_size: int = 500
+    session_cache_max_size: int = 20
     session_cache_ttl: int = 7200    
 
     search_enabled: bool = False
@@ -235,7 +235,7 @@ def load_config(env_file: str = ".env") -> AppConfig:
         anti_rate_limit_enabled=anti_rate_limit_enabled,
         anti_rate_limit_min_delay=anti_rate_limit_min_delay,
         anti_rate_limit_max_delay=anti_rate_limit_max_delay,        
-        session_cache_max_size=max(1, parse_int(values.get("DEEPSEEK_SESSION_CACHE_MAX_SIZE"), 500)),
+        session_cache_max_size=max(1, parse_int(values.get("DEEPSEEK_SESSION_CACHE_MAX_SIZE"), 20)),
         session_cache_enabled=session_cache_enabled,
         session_cache_ttl=max(60, parse_int(values.get("DEEPSEEK_SESSION_CACHE_TTL_SECONDS"), 7200)),
         search_enabled=parse_bool(values.get("DEEPSEEK_SEARCH_ENABLED"), False), 

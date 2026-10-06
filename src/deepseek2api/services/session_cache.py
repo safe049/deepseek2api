@@ -58,11 +58,18 @@ class SessionCache:
             state.last_used = time.time()
             return state
 
-    def put(self, key: str, state: SessionState) -> None:
+    def put(self, key: str, state: SessionState) -> list[str]:
+        """
+        插入/更新缓存条目。
+
+        返回：本次 LRU 淘汰后**不再被任何缓存 key 引用**的 session_id 列表，
+        调用方应当据此删除对应的上游 DeepSeek 会话。若同一 session_id
+        仍被其它前缀引用（例如同一会话的多个 turn），则不返回。
+        """
         with self._lock:
             self._store[key] = state
             self._store.move_to_end(key)
-            self._evict()
+            return self._evict_locked()
 
     def delete(self, key: str) -> SessionState | None:
         with self._lock:
@@ -79,10 +86,20 @@ class SessionCache:
                 removed += 1
         return removed
 
-    def _evict(self) -> None:
+    def _evict_locked(self) -> list[str]:
+        """调用方必须已持锁。"""
+        orphaned_sessions: list[str] = []
         while len(self._store) > self._max_size:
-            evicted_key, _ = self._store.popitem(last=False)
-            logger.debug("LRU evicted: %s...", evicted_key[:16])
+            _, evicted_state = self._store.popitem(last=False)
+            sid = evicted_state.session_id
+            logger.info(
+                "LRU evicted cache entry (session=%s..., turn=%d)",
+                sid[:12] if sid else "",
+                evicted_state.turn_count,
+            )
+            if sid and not any(s.session_id == sid for s in self._store.values()):
+                orphaned_sessions.append(sid)
+        return orphaned_sessions
 
     @property
     def size(self) -> int:

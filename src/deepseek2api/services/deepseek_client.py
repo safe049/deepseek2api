@@ -426,7 +426,9 @@ class DeepSeekWebClient:
         new_hash = prefix_hash(new_prefix, model=resolved["model"])
 
         next_turn = (resolved.get("turn_count") or 0) + 1
-        self.session_cache.put(
+
+        # ★ 写入缓存，并取回本次因超限而被淘汰且不再被引用的会话
+        orphaned_sessions = self.session_cache.put(
             new_hash,
             SessionState(
                 session_id=session_id,
@@ -444,6 +446,27 @@ class DeepSeekWebClient:
             len(tool_calls) if tool_calls else 0,
             (request_message_id or "N/A")[:12] if request_message_id else "N/A",
         )
+
+        # ★ 淘汰会话：同步删除上游，避免 DeepSeek 侧累积垃圾会话
+        for orphan_sid in orphaned_sessions:
+            if not orphan_sid or orphan_sid == session_id:
+                continue
+            self.logger.info(
+                "Cache evict | session=%s... exceeded max_size=%d, deleting upstream",
+                orphan_sid[:12], self.session_cache._max_size,
+            )
+            try:
+                self._delete_session(orphan_sid)
+            except Exception as exc:
+                self.logger.warning(
+                    "Cache evict | 删除上游会话失败 session=%s...: %s",
+                    orphan_sid[:12], exc,
+                )
+                # 顺带清理长期未活跃的 proxy session（兜底）
+        try:
+            self.cleanup_stale_sessions()
+        except Exception:
+            pass        
 
     # ═══════════════════════════════════════════════════════
     # Cache / session cleanup
