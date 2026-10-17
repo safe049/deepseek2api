@@ -276,6 +276,31 @@ def build_tool_prompt(tools, tool_choice="auto"):
         f"  - Do NOT emit a trailing <{D} calls> block with no invokes.",
         f"  - Use EXACT tool names: " + ", ".join(_tool_name(t) for t in tools if isinstance(t, dict)),
         "",
+        "## string attribute semantics (READ CAREFULLY)",
+        "",
+        "The `string` attribute is REQUIRED and controls type coercion:",
+        f'  - string="true"  -> value is kept as a RAW STRING. Use for type string.',
+        f'    <{D} parameter name="command" string="true">ls -la</{D} parameter>',
+        f'  - string="false" -> value is parsed as JSON. Use for number, boolean, object, array.',
+        f'    <{D} parameter name="timeout" string="false">30</{D} parameter>',
+        f'    <{D} parameter name="enabled" string="false">true</{D} parameter>',
+        f'    <{D} parameter name="opts" string="false">{{"depth": 2}}</{D} parameter>',
+        "",
+        "COMMON MISTAKE (will break):",
+        f'  <{D} parameter name="timeout" string="true">30</{D} parameter>',
+        '  -> timeout becomes the string "30", not the number 30.',
+        "",
+        "## Multiline values",
+        "",
+        "Parameter values MAY span multiple lines and contain any characters.",
+        "Emit the raw text between the open and close tags, exactly as-is:",
+        f'  <{D} parameter name="command" string="true">cd /tmp',
+        "ls -la",
+        f"echo done</{D} parameter>",
+        "",
+        "Do NOT escape newlines, do NOT wrap the value in quotes, do NOT write a literal backslash-n.",
+        "The value ends at the FIRST matching closing tag.",
+        "",
         "## Tools",
         "",
     ]
@@ -330,6 +355,49 @@ def _match_tool_name(name: str, known: set[str]) -> bool:
         return True
     n = _norm_name(name)
     return any(_norm_name(k) == n for k in known)
+
+
+def _schema_types(tools: Optional[list[dict]]) -> dict[str, dict[str, str]]:
+    """{tool_name: {param_name: json_type}}，用于纠正 string 属性误标。"""
+    out: dict[str, dict[str, str]] = {}
+    if not tools:
+        return out
+    for t in tools:
+        if not isinstance(t, dict):
+            continue
+        fn = t.get("function") if isinstance(t.get("function"), dict) else t
+        name = str(fn.get("name", "")).strip()
+        params = fn.get("parameters")
+        if not name or not isinstance(params, dict):
+            continue
+        props = params.get("properties")
+        if not isinstance(props, dict):
+            continue
+        out[_norm_name(name)] = {
+            str(k): str(v.get("type", "")) if isinstance(v, dict) else ""
+            for k, v in props.items()
+        }
+    return out
+
+
+def _coerce_by_schema(
+    name: str, arguments: dict, schema: dict[str, dict[str, str]],
+) -> dict:
+    """把模型误标 string=\"true\" 的非字符串参数按 schema 还原。"""
+    types = schema.get(_norm_name(name))
+    if not types:
+        return arguments
+    for key, want in types.items():
+        if want not in ("number", "integer", "boolean", "object", "array"):
+            continue
+        val = arguments.get(key)
+        if not isinstance(val, str):
+            continue
+        try:
+            arguments[key] = json.loads(val)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return arguments
 
 
 def _normalize_call(data: Any, tools: Optional[list[dict]]) -> Optional[ParsedToolCall]:
@@ -394,7 +462,11 @@ def _coerce_arguments(args: Any) -> str:
 # DSML body 解析（★ 核心：缺闭合标签也能救 ★）
 # ═══════════════════════════════════════════════════════════════
 
-def _parse_dsml_body(body: str, tools: Optional[list[dict]] = None) -> list[ParsedToolCall]:
+def _parse_dsml_body(
+    body: str,
+    tools: Optional[list[dict]] = None,
+    schema: Optional[dict[str, dict[str, str]]] = None,
+) -> list[ParsedToolCall]:
     """
     解析 DSML 块内部的若干 invoke。容忍：
 
@@ -453,6 +525,8 @@ def _parse_dsml_body(body: str, tools: Optional[list[dict]] = None) -> list[Pars
             if p_name:
                 arguments[p_name] = _decode_dsml_value(raw_value, p_is_string)
 
+        if schema:
+            arguments = _coerce_by_schema(name, arguments, schema)
         call = _normalize_call({"name": name, "arguments": arguments}, tools)
         if call:
             calls.append(call)
@@ -469,20 +543,22 @@ def _try_dsml(text: str, tools: Optional[list[dict]]) -> ToolParseResult:
     if not text:
         return ToolParseResult()
 
+    schema = _schema_types(tools)
+
     # ── 形态 ①：完整 <calls> ... </calls> ─────────────────
     m_open = _CALLS_OPEN_RE.search(text)
     if m_open:
         m_close = _CALLS_CLOSE_RE.search(text, m_open.end())
         if m_close:
             body = text[m_open.end():m_close.start()]
-            calls = _parse_dsml_body(body, tools)
+            calls = _parse_dsml_body(body, tools, schema)
             if calls:
                 clean = (text[:m_open.start()] + text[m_close.end():]).strip()
                 return ToolParseResult(calls=calls, clean_text=clean)
 
         # 有 calls 开头但无 calls 闭合 → 用最后一个 invoke 收尾
         body = text[m_open.end():]
-        calls = _parse_dsml_body(body, tools)
+        calls = _parse_dsml_body(body, tools, schema)
         if calls:
             last_close = None
             for m in _INVOKE_CLOSE_RE.finditer(text, m_open.end()):
@@ -499,7 +575,7 @@ def _try_dsml(text: str, tools: Optional[list[dict]]) -> ToolParseResult:
         m_inv = _INVOKE_OPEN_RE.search(text, 0, m_close.start())
         if m_inv:
             body = text[m_inv.start():m_close.start()]
-            calls = _parse_dsml_body(body, tools)
+            calls = _parse_dsml_body(body, tools, schema)
             if calls:
                 clean = (text[:m_inv.start()] + text[m_close.end():]).strip()
                 return ToolParseResult(calls=calls, clean_text=clean)
@@ -508,7 +584,7 @@ def _try_dsml(text: str, tools: Optional[list[dict]]) -> ToolParseResult:
     m_inv = _INVOKE_OPEN_RE.search(text)
     if m_inv:
         body = text[m_inv.start():]
-        calls = _parse_dsml_body(body, tools)
+        calls = _parse_dsml_body(body, tools, schema)
         if calls:
             last_close = None
             for m in _INVOKE_CLOSE_RE.finditer(text, m_inv.start()):
@@ -710,6 +786,7 @@ class StreamingToolDetector:
         require_marker: bool = False,
     ) -> None:
         self._tools = tools
+        self._schema = _schema_types(tools)
         self._require_marker = require_marker
         self._state = "SCAN"
         self._buf = ""
@@ -754,7 +831,7 @@ class StreamingToolDetector:
             if m_open:
                 body = body[m_open.end():]
 
-            calls = _parse_dsml_body(body, self._tools)
+            calls = _parse_dsml_body(body, self._tools, self._schema)
             if calls:
                 actions.append(StreamAction(kind="tool_calls", tool_calls=calls))
             else:
@@ -904,8 +981,7 @@ class StreamingToolDetector:
                     if a.startswith(suffix):
                         best_json = min(best_json, n - k)
             if best_json < n:
-                # 如果 "<..." 保留点更靠前，取更早的那个
-                return min(best_json, n) if "json_only" else best_json
+                return best_json
 
         return n
 
@@ -943,7 +1019,7 @@ class StreamingToolDetector:
         if m_open:
             body = body[m_open.end():]
 
-        calls = _parse_dsml_body(body, self._tools)
+        calls = _parse_dsml_body(body, self._tools, self._schema)
         if calls:
             actions.append(StreamAction(kind="tool_calls", tool_calls=calls))
         else:

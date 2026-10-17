@@ -17,7 +17,6 @@ from __future__ import annotations
 import codecs
 import gzip
 import http.client
-import itertools
 import json
 import socket
 import threading
@@ -1037,7 +1036,7 @@ class DeepSeekWebClient:
                 ds_payload["chat_session_id"] = session_id
             else:
                 self.logger.info("Step 1/4: 获取 PoW challenge (session)...")
-                pow_challenge = self._get_pow_challenge()
+                pow_challenge = self._get_pow_challenge("/api/v0/chat_session/create")
 
                 self.logger.info("Step 2/4: 求解 PoW (difficulty=%s)...", pow_challenge.get("difficulty"))
                 session_pow_header = self.pow_solver.solve(
@@ -1047,6 +1046,7 @@ class DeepSeekWebClient:
                     algorithm=pow_challenge.get("algorithm", "DeepSeekHashV1"),
                     expire_at=pow_challenge.get("expire_at", 0),
                     signature=pow_challenge.get("signature", ""),
+                    target_path="/api/v0/chat_session/create",
                 )
                 self.logger.info("PoW 求解完成")
 
@@ -1294,9 +1294,9 @@ class DeepSeekWebClient:
     # DeepSeek API calls
     # ═══════════════════════════════════════════════════════
 
-    def _get_pow_challenge(self) -> dict[str, object]:
+    def _get_pow_challenge(self, target_path: str = "/api/v0/chat/completion") -> dict[str, object]:
         body = json.dumps({
-            "target_path": "/api/v0/chat/completion",
+            "target_path": target_path,
         }).encode("utf-8")
 
         headers = {
@@ -1341,7 +1341,7 @@ class DeepSeekWebClient:
             "signature": biz_data.get("signature", ""),
             "difficulty": int(biz_data.get("difficulty", 144000)),
             "expire_at": int(biz_data.get("expire_at", 0)),
-            "target_path": biz_data.get("target_path", "/api/v0/chat/completion"),
+            "target_path": biz_data.get("target_path", target_path),
         }
 
         debug_dump(self.logger, self.config.debug_dump_all, "PoW challenge 响应", challenge)

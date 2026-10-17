@@ -142,12 +142,22 @@ def _render_assistant_with_tool_calls(msg: dict) -> str:
     return "\n".join(lines)
 
 
+_THINKING_MODELS = frozenset({"deepseek-reasoner", "deepseek-r1", "deepseek-thinking"})
+
+
 def _resolve_model_and_type(openai_payload: dict, config: AppConfig) -> tuple[str, str, bool]:
     """Return (model, model_type, thinking_enabled)."""
     model = str(openai_payload.get("model", config.default_model))
-    if model in ("deepseek-reasoner", "deepseek-r1"):
+    if model in _THINKING_MODELS:
         return model, "expert", True
     return model, "default", False
+
+
+def _finalize_mode(model_type: str, thinking_enabled: bool) -> tuple[str, bool]:
+    """思考开启时强制 expert：上游只有 expert 通道产出 THINKING 片段。"""
+    if thinking_enabled and model_type != "expert":
+        return "expert", True
+    return model_type, thinking_enabled
 
 
 def _apply_extra_body(
@@ -253,6 +263,7 @@ def convert_openai_to_deepseek(
 
     _, model_type, thinking_enabled = _resolve_model_and_type(openai_payload, config)
     search_enabled, thinking_enabled = _apply_extra_body(openai_payload, thinking_enabled, config)
+    model_type, thinking_enabled = _finalize_mode(model_type, thinking_enabled)
 
     return {
         "chat_session_id": "",
@@ -360,7 +371,8 @@ def convert_openai_to_deepseek_incremental(
 
     _, model_type, thinking_enabled = _resolve_model_and_type(openai_payload, config)
     search_enabled, thinking_enabled = _apply_extra_body(openai_payload, thinking_enabled, config)
- 
+    model_type, thinking_enabled = _finalize_mode(model_type, thinking_enabled)
+
     return {
         "chat_session_id": "",
         "parent_message_id": None,

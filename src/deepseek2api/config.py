@@ -65,6 +65,7 @@ def parse_list(value: str | None, default: tuple[str, ...] = ()) -> list[str]:
 EXPOSED_MODELS = (
     "deepseek-chat",
     "deepseek-reasoner",
+    "deepseek-thinking",
     "default",
 )
 
