@@ -101,6 +101,64 @@ def test_sse_thinking_fragment():
     assert chunk["choices"][0]["delta"]["reasoning_content"] == "more"
 
 
+def test_sse_real_upstream_think_to_response_switch():
+    """复刻真实上游事件序列：THINK 片段 → response/fragments APPEND RESPONSE → 裸 v 增量。
+
+    关键点：上游 fragment type 是 "THINK"（不是 "THINKING"），
+    且 THINK→RESPONSE 的切换信号来自 {"p":"response/fragments","o":"APPEND"}，
+    漏掉任一处都会让整段回答混进 reasoning_content。
+    """
+    st = StreamState()
+    chunks = []
+
+    def feed(ev):
+        c = convert_deepseek_to_openai_chunk(ev, "deepseek-reasoner", st)
+        if c:
+            chunks.append(c)
+        chunks.extend(st.pop_pending_chunks())
+
+    feed({"_event_type": "ready", "request_message_id": 1, "response_message_id": 2})
+    feed({"v": {"response": {"status": "WIP", "fragments": [
+        {"id": 2, "type": "THINK", "content": "嗯"},
+    ]}}})
+    feed({"p": "response/fragments/-1/content", "o": "APPEND", "v": "，想"})
+    feed({"p": "response/fragments", "o": "APPEND", "v": [
+        {"id": 3, "type": "RESPONSE", "content": "你好"},
+    ]})
+    feed({"v": "！"})
+
+    reasoning = "".join(
+        c["choices"][0]["delta"].get("reasoning_content") or "" for c in chunks
+    )
+    content = "".join(
+        c["choices"][0]["delta"].get("content") or "" for c in chunks
+    )
+    assert reasoning == "嗯，想", reasoning
+    assert content == "你好！", content
+
+
+def test_sse_multi_fragment_event_not_dropped():
+    """一个事件里带多个片段时，不能只发出第一个。"""
+    st = StreamState()
+    chunk = convert_deepseek_to_openai_chunk({"v": {"response": {
+        "status": "WIP",
+        "fragments": [
+            {"id": 1, "type": "THINK", "content": "a"},
+            {"id": 2, "type": "THINK", "content": "b"},
+            {"id": 3, "type": "RESPONSE", "content": "c"},
+        ],
+    }}}, "m", st)
+    chunks = [chunk] + st.pop_pending_chunks()
+    joined = "".join(
+        c["choices"][0]["delta"].get("reasoning_content") or
+        c["choices"][0]["delta"].get("content") or ""
+        for c in chunks
+    )
+    assert joined == "abc", joined
+    # 只有最后一个片段承载 finish_reason（此处 WIP，所以都没有）
+    assert all(c["choices"][0]["finish_reason"] is None for c in chunks)
+
+
 def test_sse_finish_once():
     st = StreamState()
     convert_deepseek_to_openai_chunk({"_event_type": "ready"}, "m", st)

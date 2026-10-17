@@ -603,14 +603,15 @@ class DeepSeekWebClient:
                     openai_chunk = convert_deepseek_to_openai_chunk(
                         event, resolved["model"], state
                     )
-                    if openai_chunk:
-                        choices = openai_chunk.get("choices", [])
+                    # 一个事件可能拆出多个 chunk（多片段），逐个累计
+                    for chunk in ([openai_chunk] if openai_chunk else []) + state.pop_pending_chunks():
+                        choices = chunk.get("choices", [])
                         if choices and isinstance(choices[0], dict):
-                            delta = choices[0].get("delta", {})
-                            c = delta.get("content", "")
+                            delta = choices[0].get("delta") or {}
+                            c = delta.get("content") or ""
                             if c:
                                 full_text += c
-                            r = delta.get("reasoning_content", "")
+                            r = delta.get("reasoning_content") or ""
                             if r:
                                 full_reasoning += r
 
@@ -798,53 +799,56 @@ class DeepSeekWebClient:
                                 event, current_resolved["model"], state
                             )
 
-                            if not openai_chunk:
+                            # 一个事件可能拆成多个 chunk（多片段），逐个处理
+                            pending = state.pop_pending_chunks()
+                            chunks = ([openai_chunk] if openai_chunk else []) + pending
+
+                            if not chunks:
                                 if self._is_finish_event(event):
                                     break
                                 continue
 
-                            choices = openai_chunk.get("choices") or []
-                            if not choices or not isinstance(choices[0], dict):
-                                yield _sse(openai_chunk)
-                                anything_yielded = True
-                                if self._is_finish_event(event):
-                                    break
-                                continue
+                            for chunk in chunks:
+                                choices = chunk.get("choices") or []
+                                if not choices or not isinstance(choices[0], dict):
+                                    yield _sse(chunk)
+                                    anything_yielded = True
+                                    continue
 
-                            delta = choices[0].get("delta") or {}
-                            finish_reason = choices[0].get("finish_reason")
-                            c = delta.get("content", "") or ""
-                            r = delta.get("reasoning_content", "") or ""
+                                delta = choices[0].get("delta") or {}
+                                finish_reason = choices[0].get("finish_reason")
+                                c = delta.get("content") or ""
+                                r = delta.get("reasoning_content") or ""
 
-                            if r:
-                                # reasoning 原样透传，不参与检测
-                                full_reasoning += r
-                                yield _sse(openai_chunk)
-                                anything_yielded = True
-                            elif c:
-                                # ★ 内容统一喂给检测器
-                                full_text += c
-                                for action in detector.feed(c):
-                                    if action.kind == "text" and action.text:
-                                        out = stripper.feed(action.text) if stripper else action.text
-                                        if out:
-                                            yield _make_content_chunk(out, current_resolved["model"])
+                                if r:
+                                    # reasoning 原样透传，不参与检测
+                                    full_reasoning += r
+                                    yield _sse(chunk)
+                                    anything_yielded = True
+                                elif c:
+                                    # ★ 内容统一喂给检测器
+                                    full_text += c
+                                    for action in detector.feed(c):
+                                        if action.kind == "text" and action.text:
+                                            out = stripper.feed(action.text) if stripper else action.text
+                                            if out:
+                                                yield _make_content_chunk(out, current_resolved["model"])
+                                                anything_yielded = True
+                                        elif action.kind == "tool_calls" and action.tool_calls:
+                                            for ch in _make_tool_call_chunks(
+                                                action.tool_calls, current_resolved["model"]
+                                            ):
+                                                yield ch
+                                            tool_calls_emitted = True
+                                            emitted_calls.extend(action.tool_calls)
                                             anything_yielded = True
-                                    elif action.kind == "tool_calls" and action.tool_calls:
-                                        for ch in _make_tool_call_chunks(
-                                            action.tool_calls, current_resolved["model"]
-                                        ):
-                                            yield ch
-                                        tool_calls_emitted = True
-                                        emitted_calls.extend(action.tool_calls)
-                                        anything_yielded = True
-                            elif finish_reason is not None:
-                                # 上游 finish chunk：记录但不透传，我们最后自己发
-                                upstream_finish_reason = finish_reason
-                            else:
-                                # 纯 role chunk / 空 delta chunk：原样透传
-                                yield _sse(openai_chunk)
-                                anything_yielded = True
+                                elif finish_reason is not None:
+                                    # 上游 finish chunk：记录但不透传，我们最后自己发
+                                    upstream_finish_reason = finish_reason
+                                else:
+                                    # 纯 role chunk / 空 delta chunk：原样透传
+                                    yield _sse(chunk)
+                                    anything_yielded = True
 
                             if self._is_finish_event(event):
                                 break
