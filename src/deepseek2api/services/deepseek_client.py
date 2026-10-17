@@ -1036,7 +1036,7 @@ class DeepSeekWebClient:
                 ds_payload["chat_session_id"] = session_id
             else:
                 self.logger.info("Step 1/4: 获取 PoW challenge (session)...")
-                pow_challenge = self._get_pow_challenge("/api/v0/chat_session/create")
+                pow_challenge = self._get_pow_challenge()
 
                 self.logger.info("Step 2/4: 求解 PoW (difficulty=%s)...", pow_challenge.get("difficulty"))
                 session_pow_header = self.pow_solver.solve(
